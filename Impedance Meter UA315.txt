@@ -1,0 +1,619 @@
+// UTFT_Demo_480x272 (C)2013 Henning Karlsen
+// web: http://www.henningkarlsen.com/electronics
+//
+// This program is a demo of how to use most of the functions
+// of the library with a supported display modules.
+//
+// This demo was made for modules with a screen resolution 
+// of 480x272 pixels.
+//
+// This program requires the UTFT library.
+//
+
+#include <UTFT.h>
+#include <Wire.h> // Use Wire according to arcticle https://garretlabs.wordpress.com/2014/03/18/the-dark-side-of-porting-arduino-sketches-on-intel-galileo-part-one/
+#include <Math.h> 
+
+// Declare which fonts we will be using
+extern uint8_t SmallFont[];
+extern uint8_t BigFont[];
+
+UTFT myGLCD(SSD1963_480,38,39,40,41);   // Remember to change the model parameter to suit your display module!
+
+void setup()
+{
+// Setup the LCD
+  myGLCD.InitLCD(); 
+  myGLCD.setFont(BigFont);
+  pinMode(48, OUTPUT);
+  pinMode(49, OUTPUT);
+  pinMode(50, OUTPUT);
+  pinMode(51, OUTPUT);
+  pinMode(52, OUTPUT);
+  pinMode(53, OUTPUT);
+  Wire.begin();
+  digitalWrite(49, HIGH); // switch. LOW=V, HIGH=I
+  select1KOhmRange();
+  myGLCD.clrScr();
+  displayGrid();
+}
+
+double totalReI;
+double totalImI;
+double totalReV;
+double totalImV;
+
+double ReferenceOhm = 0;
+  
+// Calibration variables
+//double range3ReIOpen = 22;
+//double range3ImIOpen = 150;
+
+double range3ReIOpen = 0; //1415.940; //1.66;
+double range3ImIOpen = 0; //1783.580; //-150;
+
+double range4ReVClose = 0.0; //2832 - 1415.940;
+double range4ImVClose = 0.0; //3566 - 1783.580;
+
+unsigned long totalWait;
+  
+void loop()
+{
+  select1KOhmRange();
+  commandAD5933Reset();            // reset command 
+  displayTemperature();
+  commandAD5933ExternalClock();    // external clock
+  commandAD5933GainX1();
+  commandAD5933Voltage2V();
+  
+  //writeAD5933FrequencyHz((double)5000);
+  //writeAD5933FrequencyHz((double)20000);
+  writeAD5933FrequencyHz((double)10000.0);
+  writeAD5933IncrementHz((double)0.0);
+  writeAD5933IncrementsN((word) 9);
+  writeAD5933SettlingCnt(10);
+  
+  // I-cycle
+  digitalWrite(49, HIGH);     // switch. LOW=V, HIGH=I
+  commandAD5933Reset();       // reset command 
+  commandAD5933StanbyMode();  // standby mode command. STANDBY->INITIALIZE->DELAY->SWEEP->INCREMENT is very stable !
+  commandAD5933InitializeWithStartFrequency();   // initialize with start frequency
+  delay(1000);
+  totalReI = 0.0;
+  totalImI = 0.0;
+  totalWait = 0;
+  for (byte i=0; i<10; i++) {
+    if (i==0) commandAD5933StartFrequencySweep(); else commandAD5933IncrementFrequency();
+    totalWait += delay2msAD5933UntilReady();
+    double ReOnce = readAD5933RealData();
+    double ImOnce = readAD5933ImaginaryData();
+    totalReI = totalReI + ReOnce;
+    totalImI = totalImI + ImOnce;
+  }
+  //myGLCD.print("mcs: ", 240, 1);  myGLCD.printNumI(totalWait, 317, 1); 
+  totalReI = totalReI / (double)10.0 - range3ReIOpen;
+  totalImI = totalImI / (double)10.0 - range3ImIOpen;
+  
+  // V-cycle  
+  digitalWrite(49, LOW);      // switch. LOW=V, HIGH=I
+  commandAD5933Reset();       // reset command 
+  commandAD5933StanbyMode();  // standby mode command. STANDBY->INITIALIZE->DELAY->SWEEP->INCREMENT is very stable !
+  commandAD5933InitializeWithStartFrequency();   // initialize with start frequency
+  delay(1000);
+  totalReV = 0.0;
+  totalImV = 0.0;
+  totalWait = 0;
+  for (byte i=0; i<10; i++) {
+    if (i==0) commandAD5933StartFrequencySweep(); else commandAD5933IncrementFrequency();
+    totalWait += delay2msAD5933UntilReady();
+    double ReOnce = readAD5933RealData();
+    double ImOnce = readAD5933ImaginaryData();
+    totalReV = totalReV + ReOnce;
+    totalImV = totalImV + ImOnce;
+  } 
+  //myGLCD.print("mcs: ", 240, 1);  myGLCD.printNumI(totalWait, 317, 1); 
+  totalReV = totalReV / (double)10.0 - range3ReIOpen; //range4ReVClose;
+  totalImV = totalImV / (double)10.0 - range3ImIOpen; //range4ImVClose;
+
+  displayData();
+  delay(5000);
+}
+
+void selectMilliOhmRange()
+{
+  digitalWrite(48, HIGH); // range 2, 10.1040 Ohm
+  digitalWrite(50, HIGH); // range 5, 9999000 Ohm
+  digitalWrite(51, HIGH); // range 3, 997.280 Ohm
+  digitalWrite(52, HIGH); // range 4, 100075 Ohm
+  digitalWrite(53, LOW); // range 1, 0.2067 Ohm
+  ReferenceOhm = (double)0.2067;
+  delay(10);
+}
+
+void select10OhmRange()
+{
+  digitalWrite(48, LOW); // range 2, 10.1040 Ohm
+  digitalWrite(50, HIGH); // range 5, 9999000 Ohm
+  digitalWrite(51, HIGH); // range 3, 997.280 Ohm
+  digitalWrite(52, HIGH); // range 4, 100075 Ohm
+  digitalWrite(53, HIGH); // range 1, 0.2067 Ohm
+  ReferenceOhm = (double)10.1040;
+  delay(10);
+}
+
+void select1KOhmRange()
+{
+  digitalWrite(48, HIGH); // range 2, 10.1040 Ohm
+  digitalWrite(50, HIGH); // range 5, 9999000 Ohm
+  digitalWrite(51, LOW); // range 3, 997.280 Ohm
+  digitalWrite(52, HIGH); // range 4, 100075 Ohm
+  digitalWrite(53, HIGH); // range 1, 0.2067 Ohm
+  ReferenceOhm = (double)997.280;
+  delay(10);
+}
+
+void select100KOhmRange()
+{
+  digitalWrite(48, HIGH); // range 2, 10.1040 Ohm
+  digitalWrite(50, HIGH); // range 5, 9999000 Ohm
+  digitalWrite(51, HIGH); // range 3, 997.280 Ohm
+  digitalWrite(52, LOW); // range 4, 100075 Ohm
+  digitalWrite(53, HIGH); // range 1, 0.2067 Ohm
+  ReferenceOhm = (double)100075.0;
+  delay(10);
+}
+
+void select10MOhmRange()
+{
+  digitalWrite(48, HIGH); // range 2, 10.1040 Ohm
+  digitalWrite(50, LOW); // range 5, 9999000 Ohm
+  digitalWrite(51, HIGH); // range 3, 997.280 Ohm
+  digitalWrite(52, HIGH); // range 4, 100075 Ohm
+  digitalWrite(53, HIGH); // range 1, 0.2067 Ohm
+  ReferenceOhm = (double)9999000.0;
+  delay(10);
+}
+
+unsigned long delay2msAD5933UntilReady()
+{
+  unsigned long start = millis();
+  byte r8F;
+  myGLCD.setColor(255,128,128);
+  myGLCD.print("   ", 367, 48);
+  do {
+    delay(2);
+    r8F = readAD5933(0x8F);
+    if ((r8F & 0x02) == 0) {
+      myGLCD.print("D=N", 367, 48);
+      delay(10);
+    }
+  } while ((r8F & 0x02) == 0);
+  return millis() - start;
+}
+
+void commandAD5933StanbyMode()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0xB0 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933Reset()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x80 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933ExternalClock()
+{
+  byte r81 = readAD5933(0x81);
+  r81 = 0x08 | (r81 & 0xF7);
+  writeAD5933(0x81, r81);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x81)), 109, 1);
+}
+
+void commandAD5933InitializeWithStartFrequency()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x10 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933StartFrequencySweep()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x20 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933RepeatFrequency()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x40 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933IncrementFrequency()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x30 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933MeasureTemperature()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x90 | (r80 & 0x0F);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+}
+
+void commandAD5933Voltage2V()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x00 | (r80 & 0xF9);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print("2000mV", 317,  16);
+}
+
+void commandAD5933Voltage1V()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x06 | (r80 & 0xF9);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print("1000mV", 317,  16);
+}
+
+void commandAD5933Voltage400mV()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x04 | (r80 & 0xF9);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print(" 400mV", 317,  16);
+}
+
+void commandAD5933Voltage200mV()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x02 | (r80 & 0xF9);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print(" 200mV", 317,  16);
+}
+
+void commandAD5933GainX1()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x01 | (r80 & 0xFE);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print("    x1", 317,  32);
+}
+
+void commandAD5933GainX5()
+{
+  byte r80 = readAD5933(0x80);
+  r80 = 0x00 | (r80 & 0xFE);
+  writeAD5933(0x80, r80);
+  myGLCD.setColor(128,128,255);
+  myGLCD.print(formatHEX8(readAD5933(0x80)), 77, 1); 
+  myGLCD.print("    x5", 317,  32);
+}
+
+void displayGrid()
+{
+  myGLCD.setColor(128,128,255);
+  myGLCD.print("Ctl: ", 1,   1);  myGLCD.print("T,C: ", 240,   1);
+  myGLCD.print("fHz: ", 1,  16);  myGLCD.print("P-P: ", 240,  16);
+  myGLCD.print("iHz: ", 1,  32);  myGLCD.print("Mul: ", 240,  32);
+  myGLCD.print("Inc: ", 1,  48);  myGLCD.print("Sta: ", 240,  48);
+  myGLCD.print("Stl: ", 1,  64);
+  
+  myGLCD.print("ReI: ", 1,  96);  myGLCD.print("ReV: ", 240,  96);
+  myGLCD.print("ImI: ", 1, 112);  myGLCD.print("ImV: ", 240, 112);
+  myGLCD.print("AbI: ", 1, 128);  myGLCD.print("AbV: ", 240, 128); 
+  myGLCD.print("AnI: ", 1, 144);  myGLCD.print("AnV: ", 240, 144);
+  myGLCD.print("V  : ", 1, 160);  myGLCD.print("Av : ", 240, 160);
+  myGLCD.print("ALs: ", 1, 176);  myGLCD.print("Ai : ", 240, 176);
+  
+  myGLCD.setColor(255,255,0);
+  myGLCD.print("AbZ: ", 1, 192);  myGLCD.print("Tan: ", 240, 192);
+  myGLCD.print("Cap: ", 1, 208);  myGLCD.print("Esr: ", 240, 208);
+}
+
+void displayTemperature()
+{
+  commandAD5933MeasureTemperature(); // measure temperature command
+  byte r8F;
+  do {
+    r8F = readAD5933(0x8F) & 0x07;
+    if ((r8F & 0x01) == 0) {
+      delay(10);
+    }
+  } while ((r8F & 0x01) == 0);
+  double TempC = readAD5933TemperatureC();
+  myGLCD.printNumF(TempC, 3, 317, 1, '.', 10); 
+}
+
+void displayData()
+{
+  myGLCD.setColor(128,128,255);
+  byte r8F = readAD5933(0x8F);
+  if ((r8F & 0x01) != 0) myGLCD.print("T=Y ", 317, 48); else myGLCD.print("T=N ", 317, 48);
+  if ((r8F & 0x02) != 0) myGLCD.print("D=Y ", 367, 48); else myGLCD.print("D=N ", 367, 48);
+  if ((r8F & 0x04) != 0) myGLCD.print("S=Y ", 417, 48); else myGLCD.print("S=N ", 417, 48);
+
+  myGLCD.printNumF(totalReI, 3, 77,  96, '.', 9); myGLCD.printNumF(totalReV, 3, 317,  96, '.', 9); 
+  myGLCD.printNumF(totalImI, 3, 77, 112, '.', 9); myGLCD.printNumF(totalImV, 3, 317, 112, '.', 9);
+  double AbI = sqrt(sq(totalReI) + sq(totalImI));  double AbV = sqrt(sq(totalReV) + sq(totalImV)); 
+  myGLCD.printNumF(AbI, 3, 77, 128, '.', 9);      myGLCD.printNumF(AbV, 3, 317, 128, '.', 9); 
+  double AnI = (atan2(totalImI, totalReI)/M_PI)*(double)180.0; double AnV = (atan2(totalImV, totalReV)/M_PI)*(double)180.0;
+  myGLCD.printNumF(AnI, 3, 77, 144, '.', 9);      myGLCD.printNumF(AnV, 3, 317, 144, '.', 9);
+  
+  // final
+  totalReV = totalReV - totalReI;
+  totalImV = totalImV - totalImI;
+  AnV = (atan2(totalImV, totalReV)/M_PI)*(double)180.0;
+  AnI = AnI - AnV; // - 44.142; // on resistor
+  if (AnI > (double) 180.0) AnI = AnI - (double)360.0;
+  if (AnI < (double)-180.0) AnI = AnI + (double)360.0;
+  AbV = sqrt(sq(totalReV) + sq(totalImV));
+  // find current amplitude from current sensor voltage
+  AbI = AbI / ReferenceOhm;
+  // Losses Angle
+  double lossA = (double)90.0 + AnI;
+  myGLCD.printNumF(AbV, 3, 77, 160, '.', 9);      myGLCD.printNumF(AnV, 3, 317, 160, '.', 9);
+  myGLCD.printNumF(lossA, 3, 77, 176, '.', 9);    myGLCD.printNumF(AnI, 3, 317, 176, '.', 9);
+  double tanLs = (M_PI*lossA/(double)180.0);
+  // complex impedance in ohms iz complex division of real voltage by (real current + imaginary current)
+  // (x+yi)/(u+vi)=((xu + yv)+(-xv+yu)i)/(u*u+v*v)
+  // then, when y=0
+  // x/(u+vi)=(xu-xvi)/(u*u+v*v)
+  // then for real and imaginary resistance component
+  // Rre = xu/(u*u+v*v)
+  // Rim = -xvi/(u*u+v*v)
+  // 
+  // Complex current components after making AnV=0
+  totalReI = AbI*cos(AnI*M_PI/(double)180.0);
+  totalImI = AbI*sin(AnI*M_PI/(double)180.0);
+  // AbI is a square root, so unsquareroot it by myltiplying by itself
+  // use AbI*AbI as ReI^2+ImI^2
+  double Rre =  AbV*totalReI/(AbI*AbI); 
+  double Rim = -AbV*totalImI/(AbI*AbI);
+  // Capacitance
+  double frequencyHz = readAD5933FrequencyHz();
+  double Cap = (double)(2.0)*M_PI * frequencyHz * Rim;
+  Cap = Cap / (double)1000000.0;
+  Cap = (double)1.0/Cap;
+  // Subtract capacitance of probe 56.5 pF
+  //Cap = Cap - 0.0000565;
+  myGLCD.setColor(255,255,0);
+  myGLCD.printNumF(Rre*Rre + Rim*Rim, 2, 77, 192, '.', 10); myGLCD.printNumF(tanLs, 6, 317, 192, '.', 10);
+  myGLCD.printNumF(Cap, 6, 77, 208, '.', 10);               myGLCD.printNumF(Rre,   6, 317, 208, '.', 10);
+}
+
+char formatHEX8Result[3];
+char* formatHEX8(byte value)
+{
+  sprintf(formatHEX8Result, "%02X", value);
+  formatHEX8Result[2] = 0;
+  return formatHEX8Result;
+}
+
+double readAD5933FrequencyHz()
+{
+   long triple = 0;
+   long single = 0;
+   single = readAD5933(0x82);
+   triple = triple | (single << 16);
+   single = readAD5933(0x83);
+   triple = triple | (single << 8);
+   single = readAD5933(0x84);
+   triple = triple | (single << 0);
+   double result = (double)4000000.0*((double)triple/(double)134217728.0); // 2^27;
+   return result;
+}
+
+void writeAD5933FrequencyHz(double valueHz)
+{
+   double phaseSpeed = valueHz / (double)4000000.0;
+   double controlDbl = phaseSpeed * (double)134217728.0;
+   long triple = (long)controlDbl;
+   byte single = 0;
+   single = (triple >> 16) & 0xFF;
+   writeAD5933(0x82, single);
+   single = (triple >> 8) & 0xFF;
+   writeAD5933(0x83, single);
+   single = (triple >> 0) & 0xFF;
+   writeAD5933(0x84, single);
+   
+   double frequencyHz = readAD5933FrequencyHz();
+   if (frequencyHz < 5000 || frequencyHz > 200000) 
+     { 
+       myGLCD.setBackColor(255,255,255); 
+       myGLCD.setColor(255,0,0); 
+     } else
+     {
+       myGLCD.setBackColor(0,0,0);
+       myGLCD.setColor(128,128,255);
+     }
+   myGLCD.setBackColor(0,0,0);
+   myGLCD.printNumF(frequencyHz, 3, 77, 16, '.', 10);
+}
+
+double readAD5933IncrementHz()
+{
+   long triple = 0;
+   long single = 0;
+   single = readAD5933(0x85);
+   triple = triple | (single << 16);
+   single = readAD5933(0x86);
+   triple = triple | (single << 8);
+   single = readAD5933(0x87);
+   triple = triple | (single << 0);
+   double result = (double)4000000.0*((double)triple/(double)134217728.0); // 2^27;
+   return result;
+}
+
+void writeAD5933IncrementHz(double valueHz)
+{
+   double phaseSpeed = valueHz / (double)4000000.0;
+   double controlDbl = phaseSpeed * (double)134217728.0;
+   long triple = (long)controlDbl;
+   byte single = 0;
+   single = (triple >> 16) & 0xFF;
+   writeAD5933(0x85, single);
+   single = (triple >> 8) & 0xFF;
+   writeAD5933(0x86, single);
+   single = (triple >> 0) & 0xFF;
+   writeAD5933(0x87, single);
+   myGLCD.setColor(128,128,255);
+   double incrementHz = readAD5933IncrementHz();
+   myGLCD.printNumF(incrementHz, 3, 77, 32, '.', 10);
+}
+
+word readAD5933IncrementsN()
+{
+   word result = 0;
+   word single = 0;
+   single = readAD5933(0x88);
+   result = result | ((single & 0x01) << 8);
+   single = readAD5933(0x89);
+   result = result | ((single & 0xFF) << 0);
+   return result;
+}
+
+void writeAD5933IncrementsN(word le511)
+{
+   byte single = 0;
+   single = (le511 >> 8) & 0x01;
+   writeAD5933(0x88, single);
+   single = (le511 >> 0) & 0xFF;
+   writeAD5933(0x89, single);
+   myGLCD.setColor(128,128,255);
+   le511 = readAD5933IncrementsN();
+   myGLCD.printNumI(le511, 77, 48, 4);
+}
+
+word readAD5933SettlingCnt()
+{
+   word r8A = readAD5933(0x8A);
+   word r8B = readAD5933(0x8B);
+   word result = r8B | ((r8A & 0x01) << 8);
+   if ((r8A & 0x06) == 0x06) {
+     result = result * 4;
+   } else 
+   if ((r8A & 0x06) == 0x02)
+   {
+     result = result * 2;
+   };
+   return result;
+}
+
+void writeAD5933SettlingCnt(word le2044)
+{
+   byte r8A = 0;
+   byte r8B = 0;
+   if (le2044 > 1022) 
+   { 
+     r8A = 0x06 | ((le2044 >> 10) & 0x01); // use x4 multiplier and occupy 1 MSb
+     r8B = (le2044 >> 2) & 0xFF;           // occupy 8 LSb
+   } else
+   if (le2044 > 511) 
+   { 
+     r8A = 0x02 | ((le2044 >> 9) & 0x01); // use x2 multiplier and occupy 1 MSb
+     r8B = (le2044 >> 1) & 0xFF;          // occupy 8 LSb
+   } else
+   {
+     r8A = 0x00 | ((le2044 >> 8) & 0x01); // use x1 multiplier and occupy 1 MSb
+     r8B = (le2044 >> 0) & 0xFF;          // occupy 8 LSb
+   }
+   writeAD5933(0x8A, r8A);
+   writeAD5933(0x8B, r8B);
+   myGLCD.setColor(128,128,255);
+   le2044 = readAD5933SettlingCnt();
+   myGLCD.printNumI(le2044, 77, 64, 4);
+}
+
+double readAD5933TemperatureC()
+{
+   long r92 = readAD5933(0x92);
+   r92 = r92 << 26;
+   long r93 = readAD5933(0x93);
+   r93 = r93 << 18;
+   long ival = r92 | r93;
+   ival = ival / 262144;
+   double result = (double)ival * (double)0.03125;
+   return result;
+}
+
+double readAD5933RealData()
+{
+   long r94 = readAD5933(0x94);
+   r94 = r94 << 24;
+   long r95 = readAD5933(0x95);
+   r95 = r95 << 16;
+   long ival = r94 | r95;
+   ival = ival / 65536;
+   double result = (double)ival;
+   return result;
+}
+
+double readAD5933ImaginaryData()
+{
+   long r96 = readAD5933(0x96);
+   r96 = r96 << 24;
+   long r97 = readAD5933(0x97);
+   r97 = r97 << 16;
+   long ival = r96 | r97;
+   ival = ival / 65536;
+   double result = (double)ival;
+   return result;
+}
+
+byte readAD5933(byte registerNumber)
+{
+  byte twoBytes[2];
+  twoBytes[0] = 0xB0; // Pointer Command
+  twoBytes[1] = registerNumber; // Register 0x80..0x9X
+  Wire.beginTransmission(0x0D); // 0x0D is I2C 7 bit address of AD5933
+  Wire.write(twoBytes, 2);
+  Wire.endTransmission();
+  
+  Wire.requestFrom(0x0D, 1, true); // 0x0D is I2C 7 bit address of AD5933
+  byte result = Wire.read(); // read one byte
+  return result;
+}
+
+void writeAD5933(byte registerNumber, byte value)
+{
+  byte twoBytes[2];
+  twoBytes[0] = registerNumber; // Register 0x80..0x9X
+  twoBytes[1] = value; // value
+  Wire.beginTransmission(0x0D); // 0x0D is I2C 7 bit address of AD5933
+  Wire.write(twoBytes, 2);
+  Wire.endTransmission();
+}

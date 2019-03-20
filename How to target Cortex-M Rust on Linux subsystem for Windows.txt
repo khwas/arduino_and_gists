@@ -1,0 +1,21 @@
+DOS> lxrun /install
+DOS> bash
+sudo apt-get install build-essential
+sudo apt-get install gcc-arm-none-eabi gdb-arm-none-eabi
+sudo apt-get update
+sudo apt-get upgrade
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=nightly
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo install xargo
+rustup component add rust-src
+cargo new --bin app && cd $_
+cp /mnt/c/Users/Me/Downloads/layout.ld .
+mkdir .cargo
+cp /mnt/c/Users/Me/Downloads/config .cargo
+cp /mnt/c/Users/Me/Downloads/main.rs src
+xargo build --target thumbv7m-none-eabi
+arm-none-eabi-objdump --demangle --disassemble target/thumbv7m-none-eabi/debug/app
+rm -r $HOME/.rustup/tmp/*
+cp target/thumbv7m-none-eabi/debug/app target/thumbv7m-none-eabi/debug/app.elf
+arm-none-eabi-objcopy -O binary target/thumbv7m-none-eabi/debug/app.elf target/thumbv7m-none-eabi/debug/app.bin
+arm-none-eabi-objcopy -O ihex target/thumbv7m-none-eabi/debug/app.elf target/thumbv7m-none-eabi/debug/app.hex
